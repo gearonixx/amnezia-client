@@ -105,6 +105,10 @@ Window  {
         source: Qt.platform.os === "android" ? "Components/GamepadLoader.qml" : ""
     }
 
+    ConnectionShortcutHandler {
+        id: connectionShortcutHandler
+    }
+
     Connections {
         objectName: "pageControllerConnections"
 

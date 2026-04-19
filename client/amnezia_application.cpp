@@ -269,11 +269,20 @@ void AmneziaApplication::startLocalServer() {
     server->listen(serverName);
 
     QObject::connect(server, &QLocalServer::newConnection, this, [server, this]() {
-        if (server) {
-            QLocalSocket *clientConnection = server->nextPendingConnection();
+        if (!server) return;
+        QLocalSocket *clientConnection = server->nextPendingConnection();
+        if (!clientConnection) return;
+
+        auto handle = [this, clientConnection]() {
+            const QByteArray payload = clientConnection->readAll().trimmed();
+            if (payload == "toggle-connection") {
+                if (m_coreController) m_coreController->toggleConnection();
+            } else if (m_coreController && m_coreController->pageController()) {
+                emit m_coreController->pageController()->raiseMainWindow();
+            }
             clientConnection->deleteLater();
-        }
-        emit m_coreController->pageController()->raiseMainWindow(); //TODO
+        };
+        QObject::connect(clientConnection, &QLocalSocket::disconnected, this, handle);
     });
 }
 #endif

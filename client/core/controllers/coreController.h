@@ -67,6 +67,7 @@ public:
     void setQmlRoot();
 
     void openConnectionByIndex(int serverIndex);
+    void toggleConnection();
     void importConfigFromData(const QString &data);
 
 signals:

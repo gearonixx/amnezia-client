@@ -1,5 +1,8 @@
+#include <QCoreApplication>
 #include <QDebug>
+#include <QLocalSocket>
 #include <QTimer>
+#include <cstring>
 
 #include "amnezia_application.h"
 #include "core/osSignalHandler.h"
@@ -27,10 +30,34 @@ bool isAnotherInstanceRunning()
     }
     return false;
 }
+
+static int sendIpcCommandAndExit(int argc, char *argv[], const QByteArray &command)
+{
+    QCoreApplication tmpApp(argc, argv);
+    QLocalSocket socket;
+    socket.connectToServer("AmneziaVPNInstance");
+    if (socket.waitForConnected(500)) {
+        socket.write(command);
+        socket.write("\n");
+        socket.waitForBytesWritten(500);
+        socket.disconnectFromServer();
+        if (socket.state() != QLocalSocket::UnconnectedState)
+            socket.waitForDisconnected(500);
+    }
+    return 0;
+}
 #endif
 
 int main(int argc, char *argv[])
 {
+#if !defined(Q_OS_ANDROID) && !defined(Q_OS_IOS) && !defined(MACOS_NE)
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--toggle-connection") == 0) {
+            return sendIpcCommandAndExit(argc, argv, QByteArrayLiteral("toggle-connection"));
+        }
+    }
+#endif
+
     Migrations migrationsManager;
     migrationsManager.doMigrations();
 

@@ -410,6 +410,16 @@ void CoreController::openConnectionByIndex(int serverIndex)
     m_connectionController->toggleConnection();
 }
 
+void CoreController::toggleConnection()
+{
+    if (!m_serversModel || !m_connectionController) return;
+    if (m_serversModel->rowCount() == 0) return;
+
+    const int idx = m_serversModel->getDefaultServerIndex();
+    m_serversModel->setProcessedServerIndex(idx);
+    QMetaObject::invokeMethod(m_connectionController.data(), "toggleConnection", Qt::QueuedConnection);
+}
+
 void CoreController::importConfigFromData(const QString &data)
 {
     if (!m_importController)
