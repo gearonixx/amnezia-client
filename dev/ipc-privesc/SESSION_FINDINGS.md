@@ -67,31 +67,43 @@ root sink (privileged `openvpn` with attacker-influenced config/args) and the sa
   as an unprivileged user, drive createPrivilegedProcess→OpenVPN→args, confirm root `up` exec. Not done.
 - Windows named-pipe DACL under WorldAccessOption: confirm it grants Everyone (same LPE vs SYSTEM).
 
-## Iteration 2 — 2026-07-21 — fix applied (item 2 of 3)
+## Iteration 2 — 2026-07-21 — fix applied, then simplified
 
-Applied proposed fix item (2) — `ipc/ipc.h`'s `sanitizeArguments` no longer has a
-`default: //FIXME return args;` passthrough. Every `PermittedProcess` case is now an
-explicit whitelist:
-- **OpenVPN:** `--config <path>` (must exist, no shell metacharacters in the path string),
-  `--management <host> <port>` (both tokens restricted to `[A-Za-z0-9.:_-]+`),
-  `--management-client` (flag). Matches exactly what `openvpnprotocol.cpp` passes.
-  Anything else — `--up`, `--down`, `--plugin`, `--script-security`, arbitrary extra
-  flags — is now silently dropped instead of reaching `argv`.
-- **CertUtil:** `-f`, `-importpfx` (flags), `-p <password>` (opaque, not shell-parsed),
-  `<filename>` (must exist) + `NoExport` (positional, in that order). Matches
-  `ikev2_vpn_protocol_windows.cpp` exactly.
-- **Wireguard:** no caller in this checkout drives it through `createPrivilegedProcess()`
-  (grep-confirmed) — now denies by default (`return {}`) instead of the previous
-  unconditional passthrough.
+First pass replaced the `default:` branch with a full per-process whitelist (explicit
+validators for every flag OpenVPN/CertUtil actually use, multi-value handling for
+`--management <host> <port>`, etc.) — ~100 lines, functionally solid but disproportionate
+to the actual bug. Reverted in favor of a much smaller fix: a denylist of the specific
+flags that convert "arbitrary argument" into "arbitrary command execution":
 
-Verified by compiling the new logic against real Qt6 headers (`pkg-config Qt6Core`) with
-four cases: legit OpenVPN args pass through unchanged; an injected
-`--up "/bin/sh -c evil" --script-security 2` is fully stripped, leaving only `--config`;
-legit CertUtil args pass through unchanged; Wireguard args now come back empty.
+```cpp
+default:
+    static const QSet<QString> dangerous = {
+        "--up", "--down", "--route-up", "--route-pre-down", "--ipchange",
+        "--learn-address", "--client-connect", "--client-disconnect",
+        "--auth-user-pass-verify", "--tls-verify", "--plugin", "--script-security",
+    };
+    for (const auto &a : args)
+        if (dangerous.contains(a))
+            return {};
+    return args;
+```
 
-**What this does and doesn't close:** this closes arbitrary-CLI-flag injection via the
-IPC layer — an attacker who reaches `createPrivilegedProcess()` can no longer add
-`--up`/`--plugin`/etc regardless of what they pass. It does **not** close the
+Diff vs. the original `//FIXME return args;`: **+23/-2 lines** (vs. +105/-22 for the
+whitelist version). `--config`, `--management`, arbitrary CertUtil args, etc. all still
+pass through unchanged — only the OpenVPN script-hook directives that let a caller
+*execute a command* are blocked, which is the actual "root cmd-exec" primitive in the
+finding's title. This is deliberately narrower than the whitelist version: it doesn't
+constrain `--config`'s value or add positional/multi-value validation, so a caller could
+still pass unusual flags that aren't in the denylist — but the documented exploit
+(`--up "/bin/sh -c ..."` + `--script-security 2`) is blocked, which was the ask.
+
+Verified by compiling the denylist logic against real Qt6 headers (`pkg-config Qt6Core`)
+with four cases: legit OpenVPN args pass through unchanged; `--up` alone is blocked
+(returns empty); `--script-security` alone is blocked (returns empty); legit CertUtil
+args pass through unchanged (not in the OpenVPN-specific denylist).
+
+**What this does and doesn't close:** this closes the specific command-execution flags
+for OpenVPN via the IPC layer. It does **not** close the
 config-*content* variant of this attack chain: OpenVPN's `--config` path is a
 `QTemporaryFile` under the OS temp directory (`m_configFile` in
 `openvpnprotocol.cpp`), which is not distinguishable from an attacker-planted file by
